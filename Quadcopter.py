@@ -281,12 +281,14 @@ class MPU6050:
     __AK893_RA_WIA = 0x00
     __AK893_RA_INFO = 0x01
     __AK893_RA_ST1 = 0x00
-    __AK893_RA_X_LO = 0x03
-    __AK893_RA_X_HI = 0x04
-    __AK893_RA_Y_LO = 0x05
-    __AK893_RA_Y_HI = 0x06
-    __AK893_RA_Z_LO = 0x07
-    __AK893_RA_Z_HI = 0x08
+
+    __AK893_RA_X_LO = 0x04
+    __AK893_RA_X_HI = 0x03
+    __AK893_RA_Y_LO = 0x08
+    __AK893_RA_Y_HI = 0x07
+    __AK893_RA_Z_LO = 0x06
+    __AK893_RA_Z_HI = 0x05
+
     __AK893_RA_ST2 = 0x09
     __AK893_RA_CNTL1 = 0x0A
     __AK893_RA_RSV = 0x0B
@@ -568,11 +570,19 @@ class MPU6050:
         #-------------------------------------------------------------------------------------------
         # Connect directly to the bypassed magnetometer, and configured it for 16 bit continuous data
         #-------------------------------------------------------------------------------------------
-        self.i2c_compass = I2C(0x0C)
-        self.i2c_compass.write8(self.__AK893_RA_CNTL1, 0x16);
+
+        #self.i2c_compass = I2C(0x0C)
+        self.i2c_compass = I2C(0x1E)
+        #self.i2c_compass.write8(self.__AK893_RA_CNTL1, 0x16);  #TODO  Continuous measurement mode 2 - 100Hz refresh rate 16 bit measurements
+        #HMC5883L - 75Hz, 8 samples per measurement, normal measurement configuration - write 0x78 to 0x00
+        self.i2c_compass.write8(0x00, 0x78)
+        #Default gain - write 0x20 to 0x01
+        self.i2c_compass.write8(0x01, 0x20)
+        #continuous measurement mode - write 0x00 to 0x02
+        self.i2c_compass.write8(0x02, 0x00)
 
     def readCompass(self):
-        compass_bytes = self.i2c_compass.readList(self.__AK893_RA_X_LO, 7)
+        compass_bytes = self.i2c_compass.readList(self.__AK893_RA_X_LO, 6)
 
         #-------------------------------------------------------------------------------------------
         # Convert the array of 6 bytes to 3 shorts - 7th byte kicks off another read.
@@ -580,14 +590,14 @@ class MPU6050:
         #-------------------------------------------------------------------------------------------
         compass_data = []
         for ii in range(0, 6, 2):
-            lobyte = compass_bytes[ii]
-            hibyte = compass_bytes[ii + 1]
+            lobyte = compass_bytes[ii + 1]
+            hibyte = compass_bytes[ii]
             if (hibyte > 127):
                 hibyte -= 256
 
             compass_data.append((hibyte << 8) + lobyte)
 
-        [mgx, mgy, mgz] = compass_data
+        [mgx, mgz, mgy] = compass_data
 
         mgx = (mgx - self.mgx_offset) * self.mgx_gain
         mgy = (mgy - self.mgy_offset) * self.mgy_gain
@@ -2976,7 +2986,7 @@ class Quadcopter:
         i_am_zoe = False
         i_am_hermione = False
 
-        my_name = os.uname()[1]
+        my_name = "zoe"
         if my_name == "zoe.local" or my_name == "zoe":
             print "Hi, I'm Zoe.  Nice to meet you!"
             i_am_zoe = True
@@ -3000,8 +3010,8 @@ class Quadcopter:
         X8 = False
         if i_am_zoe:
             self.compass_installed = True
-            self.camera_installed = True
-            self.gll_installed = True
+            self.camera_installed = False
+            self.gll_installed = False
             self.gps_installed = False
             self.sweep_installed = False
         elif i_am_hermione:
