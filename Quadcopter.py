@@ -3032,7 +3032,6 @@ class Remote (threading.Thread):
         self.ch2 = (self.x[5]<<8|self.x[6])/8
         self.ch3 = (self.x[7]<<8|self.x[8])/8 #throttle
         self.ch4 = (self.x[9]<<8|self.x[10])/8
-
         self.ch5 = (self.x[11]<<8|self.x[12])/8
         self.ch6 = (self.x[13]<<8|self.x[14])/8
         self.ch7 = (self.x[15]<<8|self.x[16])/8
@@ -3045,8 +3044,7 @@ class Remote (threading.Thread):
         self.rem_yaw = (self.ch4 - 1500) / (400) #yaw range -1 to 1
         #print "filled: " + str(self.filled)
         self.filled = 0
-        return self.rem_pitch, self.rem_roll, self.rem_yaw, self.rem_throttle   
-
+        return self.rem_pitch, self.rem_roll, self.rem_yaw, self.rem_throttle
 #/NEWCODE
 
 
@@ -3260,7 +3258,6 @@ class Quadcopter:
                      'front right underside',
                      'back left underside',
                      'back right underside']
-
         motor_spin_pwm = [1220, #changed
                           1080,  #1080
                           1250,
@@ -4568,7 +4565,6 @@ class Quadcopter:
             #---------------------------------------------------------------------------------------
 
             ################################## PID OUTPUT -> PWM CONVERSION ########################
-
             
             #print "pitch : " + str(apa) + ", roll : " + str(ara) + ", yaw : " + str(aya) + ", throttle" + str(0)
             #print "pitch : " + str(rem_pitch) + ", roll : " + str(rem_roll) + ", yaw : " + str(rem_yaw) + ", throttle" + str(rem_throttle)
