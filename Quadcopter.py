@@ -2990,6 +2990,10 @@ class Remote (threading.Thread):
         self.ch2 = 0
         self.ch3 = 0
         self.ch4 = 0
+        self.ch5 = 0
+        self.ch6 = 0
+        self.ch7 = 0
+        self.ch8 = 0
         self.filled = 0
         self.rem_pitch = 0
         self.rem_roll = 0
@@ -3028,13 +3032,19 @@ class Remote (threading.Thread):
         self.ch2 = (self.x[5]<<8|self.x[6])/8
         self.ch3 = (self.x[7]<<8|self.x[8])/8 #throttle
         self.ch4 = (self.x[9]<<8|self.x[10])/8
-        self.rem_pitch = (self.ch1 - 1500) / 13.33 #pitch - range -30 to 30
-        self.rem_roll = (self.ch2 - 1500) / 13.33 #roll - range -30 to 30
-        self.rem_throttle = self.ch3 - 1500 #throttle
-        self.rem_yaw = (self.ch4 - 1500) / 13.33 #yaw range -30 to 30
-        self.filled = 0
-        return self.rem_pitch, self.rem_roll, self.rem_yaw, self.rem_throttle   
+        self.ch5 = (self.x[11]<<8|self.x[12])/8
+        self.ch6 = (self.x[13]<<8|self.x[14])/8
+        self.ch7 = (self.x[15]<<8|self.x[16])/8
+        self.ch8 = (self.x[17]<<8|self.x[18])/8
 
+        #print "ch5" + str(self.ch5) + " ch6" + str(self.ch6) + "ch7" + str(self.ch7) + "ch8" + str(self.ch8) 
+        self.rem_pitch = (self.ch1 - 1500) / (400) #pitch - range -1 to 1
+        self.rem_roll = (self.ch2 - 1500) / (400) #roll - range -1 to 1
+        self.rem_throttle = (self.ch3 - 1500) / (400)  #throttle range -1 to 1
+        self.rem_yaw = (self.ch4 - 1500) / (400) #yaw range -1 to 1
+        #print "filled: " + str(self.filled)
+        self.filled = 0
+        return self.rem_pitch, self.rem_roll, self.rem_yaw, self.rem_throttle
 #/NEWCODE
 
 
@@ -3248,28 +3258,23 @@ class Quadcopter:
                      'front right underside',
                      'back left underside',
                      'back right underside']
+        motor_spin_pwm = [1220, #changed
+                          1080,  #1080
+                          1250,
+                          1250,
+                          1200,  #arbitrary
+                          1200,
+                          1200,
+                          1200]
 
-        motor_spin_pwm = [140, #changed
-                          0,  #1080
-                          140,
-                          160,
-                          140,  #arbitrary
-                          140,
-                          140,
-                          140]
+        self.min_spin_pwm = min(motor_spin_pwm)
 
         #-------------------------------------------------------------------------------------------
         # Prime the ESCs to stop their anonying beeping!  All 4 of P, C, H & Z  use the T-motor ESCs
         # with the same ESC firmware so have the same spin_pwm
         #-------------------------------------------------------------------------------------------
         global stfu_pwm
-        global spin_pwm
         stfu_pwm = 1000
-        spin_pwm = 0
-        if i_am_zoe:
-            spin_pwm = 1080 #changed
-        elif i_am_hermione:
-            spin_pwm = 1080 #changed
 
         self.esc_list = []
         for esc_index in range(8 if X8 else 4):
@@ -3371,6 +3376,7 @@ class Quadcopter:
                 self.shutdown()
 
             self.argv = sys.argv[1:] + cli_argv.split()
+            print self.argv
             self.fly()
 
     #===============================================================================================
@@ -3664,7 +3670,7 @@ class Quadcopter:
         print "Starting up the motors..."
 
         for esc in self.esc_list:
-            esc.set(spin_pwm + esc.spin)
+            esc.set(esc.spin)
 
         #-------------------------------------------------------------------------------------------
         # Initialize the base setting of earth frame take-off height - i.e. the vertical distance from
@@ -4018,12 +4024,13 @@ class Quadcopter:
             #---------------------------------------------------------------------------------------
             nfb = mpu6050.numFIFOBatches()
             #newcode
-            print "no.fifo" + str(nfb)
+            #print "no.fifo" + str(nfb)
             if nfb >= self.FIFO_MAXIMUM:
                 logger.critical("ABORT: FIFO too full risking overflow: %d.", nfb)
                 if vmp != None:
                     logger.critical("       Next VFP phase: %d", vmp.phase)
-                break
+                #newcode
+                #break
 
             #INFORMATION
             #FIFO_MINIMUM : 10
@@ -4158,7 +4165,7 @@ class Quadcopter:
             # as integration and PID Intergral and Differential factors.
             #---------------------------------------------------------------------------------------
             motion_loops += 1
-            print motion_dt
+            #print motion_dt
             sampling_loops += motion_dt * sampling_rate
             fusion_dt += motion_dt
             vmpt += motion_dt
@@ -4432,6 +4439,21 @@ class Quadcopter:
             [p_out, i_out, d_out] = qdz_pid.Compute(qdz_input, qdz_target, motion_dt)
             qvz_target = p_out + i_out + d_out
 
+
+
+
+            #NEWCODE #changed
+            #INSERT CODE FOR READING PITCH, ROLL FROM REMOTE
+            #NEWCODE #changed
+            if remote.isFilled() == True:
+                rem_pitch, rem_roll, rem_yaw, rem_throttle = remote.getData()
+            #else:
+            #   print "NOT filled"
+            #/NEWCODE
+            qvx_target = rem_pitch
+            qvy_target = -rem_roll
+            qvz_target = 0
+
             '''
             '''
             #---------------------------------------------------------------------------------------
@@ -4499,7 +4521,11 @@ class Quadcopter:
             [p_out, i_out, d_out] = ra_pid.Compute(ara, ra_target, motion_dt)
             rr_target = p_out + i_out + d_out
 
-            [p_out, i_out, d_out] = ya_pid.Compute(aya, ya_target, motion_dt)
+            #changed
+            #[p_out, i_out, d_out] = ya_pid.Compute(aya, ya_target, motion_dt)
+            #yr_target = p_out + i_out + d_out
+
+            [p_out, i_out, d_out] = ya_pid.Compute(aya, rem_yaw * 2, motion_dt)
             yr_target = p_out + i_out + d_out
 
             '''
@@ -4539,26 +4565,31 @@ class Quadcopter:
             #---------------------------------------------------------------------------------------
 
             ################################## PID OUTPUT -> PWM CONVERSION ########################
-
-            #NEWCODE #changed
-            if remote.isFilled() == True:
-                rem_pitch, rem_roll, rem_yaw, rem_throttle = remote.getData()
-            #/NEWCODE
             
             #print "pitch : " + str(apa) + ", roll : " + str(ara) + ", yaw : " + str(aya) + ", throttle" + str(0)
             #print "pitch : " + str(rem_pitch) + ", roll : " + str(rem_roll) + ", yaw : " + str(rem_yaw) + ", throttle" + str(rem_throttle)
-
+            
+            """
             #NEWCODE #changed
-            [p_out, i_out, d_out] = pa_pid.Compute(apa, rem_pitch/12, motion_dt) #changed
+            #INSERT CODE FOR READING PITCH, ROLL FROM REMOTE
+            #NEWCODE #changed
+            if remote.isFilled() == True:
+                rem_pitch, rem_roll, rem_yaw, rem_throttle = remote.getData()
+            #else:
+            #   print "NOT filled"
+            #/NEWCODE
+            #NEWCODE #changed
+            
+            [p_out, i_out, d_out] = pa_pid.Compute(apa, rem_pitch * 2.5, motion_dt) #changed
             pr_target = p_out + i_out + d_out
  
-            [p_out, i_out, d_out] = ra_pid.Compute(ara, rem_roll/12, motion_dt) #changed
+            [p_out, i_out, d_out] = ra_pid.Compute(ara, rem_roll * 2.5, motion_dt) #changed
             rr_target = p_out + i_out + d_out
 
-            [p_out, i_out, d_out] = ya_pid.Compute(aya, rem_yaw/12, motion_dt) #changed
+            [p_out, i_out, d_out] = ya_pid.Compute(aya, rem_yaw * 2.5, motion_dt) #changed
             yr_target = p_out + i_out + d_out
             #/NEWCODE #changed
-            
+            """
 
             [p_out, i_out, d_out] = pr_pid.Compute(qry, pr_target, motion_dt)
             pr_out = p_out + i_out + d_out
@@ -4572,8 +4603,8 @@ class Quadcopter:
             #---------------------------------------------------------------------------------------
             # Convert the vertical velocity PID output direct to ESC input PWM pulse width.
             #---------------------------------------------------------------------------------------
-            vert_out = hover_pwm + qaz_out #changed
-            vert_out = hover_pwm + rem_throttle #changed
+            #vert_out = hover_pwm + qaz_out #changed
+            vert_out = hover_pwm + (rem_throttle * 500) #changed
 
             #---------------------------------------------------------------------------------------
             # Convert the rotation rate PID outputs direct to ESC input PWM pulse width
@@ -4592,7 +4623,7 @@ class Quadcopter:
                 #-----------------------------------------------------------------------------------
                 # Update all blades' power in accordance with the z error
                 #-----------------------------------------------------------------------------------
-                pulse_width = vert_out + esc.spin #self.spin
+                pulse_width = vert_out + esc.spin - self.min_spin_pwm
 
                 #-----------------------------------------------------------------------------------
                 # For a left downwards roll, the x gyro goes negative, so the PID error is positive,
