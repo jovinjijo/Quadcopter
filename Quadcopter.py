@@ -35,8 +35,9 @@ import ctypes
 from ctypes.util import find_library
 import picamera
 import struct
-import gps
 import serial
+import threading
+#import gps
 
 
 MIN_SATS = 10
@@ -515,8 +516,30 @@ class MPU6050:
         gx /= fifo_batches
         gy /= fifo_batches
         gz /= fifo_batches
+        #return ax, ay, az, gx, gy, gz, fifo_batches / sampling_rate
+        return ay, -ax, az, gy, -gx, gz, fifo_batches / sampling_rate #changed
+        # ay, -ax, gy, -gx -> YEP
+        #az - always +ve
+        #gz -> -ve
+        # -ay, -ax, -gy, -gx -> NOPE
+        # -ay, -ax, gy, -gx -> NOPE
+        # -ay, -ax, -gy, gx -> NOPE
+        # -ay, -ax, gy, gx -> NOPE
+        
+        # ay, ax, -gy, -gx -> NOPE
+        # ay, ax, gy, gx -> NOPE
+        # ay, ax, gy, -gx -> NOPE
+        # ay, ax, -gy, gx -> NOPE
+        
+        # -ay, ax, gy, gx -> NOPE
+        # -ay, ax, -gy, gx -> NOPE
+        # -ay, ax, gy, -gx -> NOPE
+        # -ay, ax, -gy, -gx -> NOPE
 
-        return ax, ay, az, gx, gy, gz, fifo_batches / sampling_rate
+        # ay, -ax, -gy, -gx -> NOPE
+        # ay, -ax, -gy, gx -> NOPE
+        # ay, -ax, gy, gx -> NOPE
+        # ay, -ax, gy, -gx -> NOPE
 
     def flushFIFO(self):
         #-------------------------------------------------------------------------------------------
@@ -1136,7 +1159,7 @@ class YAW_PID(PID):
 ####################################################################################################
 class ESC:
 
-    def __init__(self, pin, location, rotation, name):
+    def __init__(self, pin, location, rotation, name, spin):
         #-------------------------------------------------------------------------------------------
         # The GPIO BCM numbered pin providing PWM signal for this ESC
         #-------------------------------------------------------------------------------------------
@@ -1158,6 +1181,8 @@ class ESC:
         #-------------------------------------------------------------------------------------------
         self.pulse_width = 0
 
+        self.spin = spin #changed
+
         #-------------------------------------------------------------------------------------------
         # Initialize the RPIO DMA PWM for this ESC.
         #-------------------------------------------------------------------------------------------
@@ -1165,7 +1190,7 @@ class ESC:
 
     def set(self, pulse_width):
         pulse_width = pulse_width if pulse_width >= 1000 else 1000
-        pulse_width = pulse_width if pulse_width <= 1999 else 1999
+        pulse_width = pulse_width if pulse_width <= 1999 else 1999 #changed it was 1999
 
         self.pulse_width = pulse_width
 
@@ -1366,7 +1391,7 @@ def CheckCLI(argv):
     #-----------------------------------------------------------------------------------------------
     # Defaults for horizontal velocity PIDs
     #-----------------------------------------------------------------------------------------------
-    cli_hvp_gain = 1.5
+    cli_hvp_gain = 1.5 #changed 1.5
     cli_hvi_gain = 0.0
     cli_hvd_gain = 0.0
 
@@ -1380,7 +1405,7 @@ def CheckCLI(argv):
         #-------------------------------------------------------------------------------------------
         # Hermione's PID configuration due to using her frame / ESCs / motors / props
         #-------------------------------------------------------------------------------------------
-        cli_hover_pwm = 1600
+        cli_hover_pwm = 1250 #changed
 
         #-------------------------------------------------------------------------------------------
         # Defaults for vertical velocity PIDs.
@@ -1414,26 +1439,26 @@ def CheckCLI(argv):
         #-------------------------------------------------------------------------------------------
         # Zoe's PID configuration due to using her ESCs / motors / props
         #-------------------------------------------------------------------------------------------
-        cli_hover_pwm = 1500
+        cli_hover_pwm = 1300 #changed
 
         #-------------------------------------------------------------------------------------------
         # Defaults for vertical velocity PIDs
         #-------------------------------------------------------------------------------------------
-        cli_vvp_gain = 400.0
-        cli_vvi_gain = 200.0
+        cli_vvp_gain = 400.0  #changed 400
+        cli_vvi_gain = 200.0  #changed 200
         cli_vvd_gain = 0.0
 
         #-------------------------------------------------------------------------------------------
         # Defaults for pitch rotation rate PIDs
         #-------------------------------------------------------------------------------------------
-        cli_prp_gain = 80.0
+        cli_prp_gain = 80.0 #changed 80
         cli_pri_gain = 0.0
         cli_prd_gain = 0.0
 
         #-------------------------------------------------------------------------------------------
         # Defaults for roll rotation rate PIDs
         #-------------------------------------------------------------------------------------------
-        cli_rrp_gain = 80.0
+        cli_rrp_gain = 80.0 #changed
         cli_rri_gain = 0.0
         cli_rrd_gain = 0.0
 
@@ -2955,6 +2980,77 @@ class VideoManager:
         self.phase += 1
         return rv
 
+#NEWCODE class for remote connecivity
+class Remote (threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.ser = serial.Serial("/dev/ttyS0", 115200, timeout=None)
+        self.x = bytearray(21)
+        self.ch1 = 0
+        self.ch2 = 0
+        self.ch3 = 0
+        self.ch4 = 0
+        self.ch5 = 0
+        self.ch6 = 0
+        self.ch7 = 0
+        self.ch8 = 0
+        self.filled = 0
+        self.rem_pitch = 0
+        self.rem_roll = 0
+        self.rem_yaw = 0
+        self.rem_throttle = 0
+        self.stopped = False
+
+    def run(self):
+        #NEWCODE #changed
+        while(True):
+            #ser.reset_input_buffer()
+            self.ser.readinto(self.x)
+            if(self.x[0] != 168):  #0xa8
+                print "NO" + str(self.x[0])
+                self.ser = serial.Serial("/dev/ttyS0", 115200, timeout=None)
+                continue
+            else:
+                self.filled = self.filled + 1
+            if(self.stopped):
+                break
+
+
+    def isFilled(self):
+        if self.filled > 0:
+            return True
+        else:
+            return False
+
+    def stop(self):
+        self.stopped = True
+        self.join()
+        self.ser.close()
+
+    def getData(self):
+        self.ch1 = (self.x[3]<<8|self.x[4])/8
+        self.ch2 = (self.x[5]<<8|self.x[6])/8
+        self.ch3 = (self.x[7]<<8|self.x[8])/8 #throttle
+        self.ch4 = (self.x[9]<<8|self.x[10])/8
+
+        self.ch5 = (self.x[11]<<8|self.x[12])/8
+        self.ch6 = (self.x[13]<<8|self.x[14])/8
+        self.ch7 = (self.x[15]<<8|self.x[16])/8
+        self.ch8 = (self.x[17]<<8|self.x[18])/8
+
+        #print "ch5" + str(self.ch5) + " ch6" + str(self.ch6) + "ch7" + str(self.ch7) + "ch8" + str(self.ch8) 
+        self.rem_pitch = (self.ch1 - 1500) / (400) #pitch - range -1 to 1
+        self.rem_roll = (self.ch2 - 1500) / (400) #roll - range -1 to 1
+        self.rem_throttle = (self.ch3 - 1500) / (400)  #throttle range -1 to 1
+        self.rem_yaw = (self.ch4 - 1500) / (400) #yaw range -1 to 1
+        #print "filled: " + str(self.filled)
+        self.filled = 0
+        return self.rem_pitch, self.rem_roll, self.rem_yaw, self.rem_throttle   
+
+#/NEWCODE
+
+
+
 
 ####################################################################################################
 #
@@ -3009,7 +3105,7 @@ class Quadcopter:
         #-------------------------------------------------------------------------------------------
         X8 = False
         if i_am_zoe:
-            self.compass_installed = True
+            self.compass_installed = False
             self.camera_installed = False
             self.gll_installed = False
             self.gps_installed = False
@@ -3165,22 +3261,27 @@ class Quadcopter:
                      'back left underside',
                      'back right underside']
 
+        motor_spin_pwm = [1220, #changed
+                          1080,  #1080
+                          1250,
+                          1250,
+                          1200,  #arbitrary
+                          1200,
+                          1200,
+                          1200]
+
+        self.min_spin_pwm = min(motor_spin_pwm)
+
         #-------------------------------------------------------------------------------------------
         # Prime the ESCs to stop their anonying beeping!  All 4 of P, C, H & Z  use the T-motor ESCs
         # with the same ESC firmware so have the same spin_pwm
         #-------------------------------------------------------------------------------------------
         global stfu_pwm
-        global spin_pwm
         stfu_pwm = 1000
-        spin_pwm = 0
-        if i_am_zoe:
-            spin_pwm = 1150
-        elif i_am_hermione:
-            spin_pwm = 1150
 
         self.esc_list = []
         for esc_index in range(8 if X8 else 4):
-            esc = ESC(pin_list[esc_index], location_list[esc_index], rotation_list[esc_index], name_list[esc_index])
+            esc = ESC(pin_list[esc_index], location_list[esc_index], rotation_list[esc_index], name_list[esc_index], motor_spin_pwm[esc_index]) #changed
             self.esc_list.append(esc)
 
         #===========================================================================================
@@ -3210,7 +3311,7 @@ class Quadcopter:
                 motion_rate = 75     # Hz
         else:
             sampling_rate = 1000     # Hz
-            motion_rate = 100        # Hz
+            motion_rate = 200        # Hz
 
         glpf = 1                     #AB: 184Hz
 
@@ -3278,6 +3379,7 @@ class Quadcopter:
                 self.shutdown()
 
             self.argv = sys.argv[1:] + cli_argv.split()
+            print self.argv
             self.fly()
 
     #===============================================================================================
@@ -3483,7 +3585,7 @@ class Quadcopter:
         #-------------------------------------------------------------------------------------------
         # The roll angle PID controls stable angles around the X-axis
         #-------------------------------------------------------------------------------------------
-        PID_PA_P_GAIN = 2.0 # pap_gain
+        PID_PA_P_GAIN = 2.0 # pap_gain #changed 2.0
         PID_PA_I_GAIN = 0.0 # pai_gain
         PID_PA_D_GAIN = 0.0 # pad_gain
 
@@ -3497,7 +3599,7 @@ class Quadcopter:
         #-------------------------------------------------------------------------------------------
         # The roll angle PID controls stable angles around the X-axis
         #-------------------------------------------------------------------------------------------
-        PID_RA_P_GAIN = 2.0 # rap_gain
+        PID_RA_P_GAIN = 2.0 # rap_gain #changed 2.0
         PID_RA_I_GAIN = 0.0 # rai_gain
         PID_RA_D_GAIN = 0.0 # rad_gain
 
@@ -3511,7 +3613,7 @@ class Quadcopter:
         #-------------------------------------------------------------------------------------------
         # The yaw angle PID controls stable angles around the Z-axis
         #-------------------------------------------------------------------------------------------
-        PID_YA_P_GAIN = 6.0 # yap_gain
+        PID_YA_P_GAIN = 6.0 # yap_gain #changed 6.0
         PID_YA_I_GAIN = 0.0 # yai_gain
         PID_YA_D_GAIN = 0.0 # yad_gain
 
@@ -3571,7 +3673,7 @@ class Quadcopter:
         print "Starting up the motors..."
 
         for esc in self.esc_list:
-            esc.set(spin_pwm)
+            esc.set(esc.spin)
 
         #-------------------------------------------------------------------------------------------
         # Initialize the base setting of earth frame take-off height - i.e. the vertical distance from
@@ -3824,7 +3926,7 @@ class Quadcopter:
             pwm_header = "FL PWM, FR PWM, BL PWM, BR PWM" if i_am_zoe else "FLT PWM, FRT PWM, BLT PWM, BRT PWM, FLB PWM, FRB PWM, BLB PWM, BRB PWM"
             logger.warning("time, dt, loops, " +
                            "temperature, " +
-                           "mgx, mgy, mgz, cya, " +
+#                           "mgx, mgy, mgz, cya, " + #changed
                            "edx_fuse, edy_fuse, edz_fuse, " +
                            "evx_fuse, evy_fuse, evz_fuse, " +
 #                           "qdx_fuse, qdy_fuse, qdz_fuse, " +
@@ -3836,21 +3938,22 @@ class Quadcopter:
                            "qgx, qgy, qgz, " +
                            "pitch, roll, yaw, yaw2, " +
 
-#                           "qdx_input, qdy_input, qdz_input, " +
-#                           "qdx_target, qdy_target, qdz_target' " +
-#                           "qvx_input, qvy_input, qvz_input, " +
-#                           "qvx_target, qvy_target, qvz_target, " +
+                           "qdx_input, qdy_input, qdz_input, " +
+                           "qdx_target, qdy_target, qdz_target, " +
+                           "qvx_input, qvy_input, qvz_input, " +
+                           "qvx_target, qvy_target, qvz_target, " +
 #                           "qvz_out, " +
-#                           "pa_input, ra_input, ya_input, " +
-#                           "pa_target, ra_target, ya_target, " +
-#                           "pr_input, rr_input, yr_input, " +
-#                           "pr_target, rr_target, yr_target, " +
-#                           "pr_out, rr_out, yr_out, " +
+                           "YOLO, " +
+                           "pa_input, ra_input, ya_input, " +
+                           "pa_target, ra_target, ya_target, " +
+                           "pr_input, rr_input, yr_input, " +
+                           "pr_target, rr_target, yr_target, " +
+                           "pr_out, rr_out, yr_out, " +
 
-#                            "qdx_input, qdx_target, qvx_input, qvx_target, pa_input, pa_target, pr_input, pr_target, pr_out, " +
-#                            "qdy_input, qdy_target, qvy_input, qvy_target, ra_input, ra_target, rr_input, rr_target, rr_out, " +
-#                            "qdz_input, qdz_target, qvz_input, qvz_target, qvz_out, " +
-#                            "ya_input, ya_target, yr_input, yr_target, yr_out, " +
+                            "qdx_input, qdx_target, qvx_input, qvx_target, pa_input, pa_target, pr_input, pr_target, pr_out, " +
+                            "qdy_input, qdy_target, qvy_input, qvy_target, ra_input, ra_target, rr_input, rr_target, rr_out, " +
+                            "qdz_input, qdz_target, qvz_input, qvz_target, qaz_out, " +
+                            "ya_input, ya_target, yr_input, yr_target, yr_out, " +
                            pwm_header)
 
         #-------------------------------------------------------------------------------------------
@@ -3880,6 +3983,12 @@ class Quadcopter:
         mpu6050.flushFIFO()
         mpu6050.enableFIFOOverflowISR()
 
+
+        #prev_time = time.time()
+        #now_time = time.time()
+        #max_time = 0
+        #min_time = 1000
+
         #===========================================================================================
         #
         # Motion and PID processing loop naming conventions
@@ -3896,25 +4005,40 @@ class Quadcopter:
         # a?a = absoluted angles between frames
         #
         #===========================================================================================
+        
+        #NEWCODE
+        remote = Remote()
+        remote.start()
+        rem_pitch = 0
+        rem_roll = 0
+        rem_yaw = 0
+        rem_throttle = 0
+        #NEWCODE
+
+        #newcode
+        #start_time_yolo = time.time()
         while self.keep_looping:
-
-
+            #newcode
+            #p_t = time.time()
             ############################### SENSOR INPUT SCHEDULING ################################
-
-
             #---------------------------------------------------------------------------------------
             # Check on the number of IMU batches already stashed in the FIFO, and if not enough,
             # check autopilot and video, and ultimate sleep.
             #---------------------------------------------------------------------------------------
             nfb = mpu6050.numFIFOBatches()
-
+            #newcode
+            #print "no.fifo" + str(nfb)
             if nfb >= self.FIFO_MAXIMUM:
                 logger.critical("ABORT: FIFO too full risking overflow: %d.", nfb)
                 if vmp != None:
                     logger.critical("       Next VFP phase: %d", vmp.phase)
-                break
+                #newcode
+                #break
 
-
+            #INFORMATION
+            #FIFO_MINIMUM : 10
+            #FIFO_MAXIMIM : 33
+            
             if nfb < self.FIFO_MINIMUM:
                 #-----------------------------------------------------------------------------------
                 # We have some spare time before we need to run the next motion processing; see if
@@ -3934,7 +4058,6 @@ class Quadcopter:
                     #AB: This continue could be an else for the poll code instead for clarity.
                     '''
                     continue
-
                 #-----------------------------------------------------------------------------------
                 # Nowt else to do; sleep until either we timeout, or more data comes in from GPS
                 # video, or autopilot.
@@ -3945,7 +4068,6 @@ class Quadcopter:
                 except:
                     logger.critical("ERROR: poll error")
                     break
-
                 for fd, event in results:
                     if fd == autopilot_fd:
                         #---------------------------------------------------------------------------
@@ -3988,6 +4110,7 @@ class Quadcopter:
                 #-----------------------------------------------------------------------------------
                 # We had free time, do we still?  Better check.
                 #-----------------------------------------------------------------------------------
+                #newcode
                 continue
 
 
@@ -3998,9 +4121,11 @@ class Quadcopter:
             # Before proceeding further, check the FIFO overflow interrupt to ensure we didn't sleep
             # too long
             #---------------------------------------------------------------------------------------
+            #newcode
             if GPIO.event_detected(GPIO_FIFO_OVERFLOW_INTERRUPT):
-                logger.critical("ABORT: FIFO overflow.")
-                break
+            #    logger.critical("ABORT: FIFO overflow.")
+                print "OVERFLOW"
+            #    break
 
             #---------------------------------------------------------------------------------------
             # Power brownout check - doesn't work on 3B onwards
@@ -4011,6 +4136,8 @@ class Quadcopter:
             #AB!     break
             '''
 
+            
+            #CHECKPOINT1
             #---------------------------------------------------------------------------------------
             # Now get the batch of averaged data from the FIFO.
             #---------------------------------------------------------------------------------------
@@ -4021,7 +4148,10 @@ class Quadcopter:
                 for arg in err.args:
                     logger.critical("%s", arg)
                 break
+            
 
+            #CHECKPOINT2 ckpt1 -> ckpt2 approx 5ms
+            
             #---------------------------------------------------------------------------------------
             # Sort out units and calibration for the incoming data
             #---------------------------------------------------------------------------------------
@@ -4038,6 +4168,7 @@ class Quadcopter:
             # as integration and PID Intergral and Differential factors.
             #---------------------------------------------------------------------------------------
             motion_loops += 1
+            #print motion_dt
             sampling_loops += motion_dt * sampling_rate
             fusion_dt += motion_dt
             vmpt += motion_dt
@@ -4311,6 +4442,21 @@ class Quadcopter:
             [p_out, i_out, d_out] = qdz_pid.Compute(qdz_input, qdz_target, motion_dt)
             qvz_target = p_out + i_out + d_out
 
+
+
+
+            #NEWCODE #changed
+            #INSERT CODE FOR READING PITCH, ROLL FROM REMOTE
+            #NEWCODE #changed
+            if remote.isFilled() == True:
+                rem_pitch, rem_roll, rem_yaw, rem_throttle = remote.getData()
+            #else:
+            #   print "NOT filled"
+            #/NEWCODE
+            qvx_target = rem_pitch
+            qvy_target = -rem_roll
+            qvz_target = 0
+
             '''
             '''
             #---------------------------------------------------------------------------------------
@@ -4378,7 +4524,11 @@ class Quadcopter:
             [p_out, i_out, d_out] = ra_pid.Compute(ara, ra_target, motion_dt)
             rr_target = p_out + i_out + d_out
 
-            [p_out, i_out, d_out] = ya_pid.Compute(aya, ya_target, motion_dt)
+            #changed
+            #[p_out, i_out, d_out] = ya_pid.Compute(aya, ya_target, motion_dt)
+            #yr_target = p_out + i_out + d_out
+
+            [p_out, i_out, d_out] = ya_pid.Compute(aya, rem_yaw * 2, motion_dt)
             yr_target = p_out + i_out + d_out
 
             '''
@@ -4417,6 +4567,34 @@ class Quadcopter:
             #                      stability.
             #---------------------------------------------------------------------------------------
 
+            ################################## PID OUTPUT -> PWM CONVERSION ########################
+
+            
+            #print "pitch : " + str(apa) + ", roll : " + str(ara) + ", yaw : " + str(aya) + ", throttle" + str(0)
+            #print "pitch : " + str(rem_pitch) + ", roll : " + str(rem_roll) + ", yaw : " + str(rem_yaw) + ", throttle" + str(rem_throttle)
+            
+            """
+            #NEWCODE #changed
+            #INSERT CODE FOR READING PITCH, ROLL FROM REMOTE
+            #NEWCODE #changed
+            if remote.isFilled() == True:
+                rem_pitch, rem_roll, rem_yaw, rem_throttle = remote.getData()
+            #else:
+            #   print "NOT filled"
+            #/NEWCODE
+            #NEWCODE #changed
+            
+            [p_out, i_out, d_out] = pa_pid.Compute(apa, rem_pitch * 2.5, motion_dt) #changed
+            pr_target = p_out + i_out + d_out
+ 
+            [p_out, i_out, d_out] = ra_pid.Compute(ara, rem_roll * 2.5, motion_dt) #changed
+            rr_target = p_out + i_out + d_out
+
+            [p_out, i_out, d_out] = ya_pid.Compute(aya, rem_yaw * 2.5, motion_dt) #changed
+            yr_target = p_out + i_out + d_out
+            #/NEWCODE #changed
+            """
+
             [p_out, i_out, d_out] = pr_pid.Compute(qry, pr_target, motion_dt)
             pr_out = p_out + i_out + d_out
 
@@ -4426,14 +4604,11 @@ class Quadcopter:
             [p_out, i_out, d_out] = yr_pid.Compute(qrz, yr_target, motion_dt)
             yr_out = p_out + i_out + d_out
 
-
-            ################################## PID OUTPUT -> PWM CONVERSION ########################
-
-
             #---------------------------------------------------------------------------------------
             # Convert the vertical velocity PID output direct to ESC input PWM pulse width.
             #---------------------------------------------------------------------------------------
-            vert_out = hover_pwm + qaz_out
+            #vert_out = hover_pwm + qaz_out #changed
+            vert_out = hover_pwm + (rem_throttle * 500) #changed
 
             #---------------------------------------------------------------------------------------
             # Convert the rotation rate PID outputs direct to ESC input PWM pulse width
@@ -4452,7 +4627,7 @@ class Quadcopter:
                 #-----------------------------------------------------------------------------------
                 # Update all blades' power in accordance with the z error
                 #-----------------------------------------------------------------------------------
-                pulse_width = vert_out
+                pulse_width = vert_out + esc.spin - self.min_spin_pwm
 
                 #-----------------------------------------------------------------------------------
                 # For a left downwards roll, the x gyro goes negative, so the PID error is positive,
@@ -4508,7 +4683,7 @@ class Quadcopter:
                                                                                                                                   self.esc_list[7].pulse_width)
                 logger.warning("%f, %f, %d, " % (sampling_loops / sampling_rate, motion_dt, sampling_loops) +
                                "%f, " % (temp / 333.86 + 21) +
-                               "%f, %f, %f, %f, " % (mgx, mgy, mgz, math.degrees(cya)) +
+#                               "%f, %f, %f, %f, " % (mgx, mgy, mgz, math.degrees(cya)) + #changed
                                "%f, %f, %f, " % (edx_fuse, edy_fuse, edz_fuse) +
                                "%f, %f, %f, " % (evx_fuse, evy_fuse, evz_fuse) +
 #                               "%f, %f, %f, " % (qdx_fuse, qdy_fuse, qdz_fuse) +
@@ -4520,22 +4695,43 @@ class Quadcopter:
                                "%f, %f, %f, " % (qgx, qgy, qgz) +
                                "%f, %f, %f, %f, " % (math.degrees(pa), math.degrees(ra), math.degrees(ya), math.degrees(ya_fused)) +
 
-#                               "%f, %f, %f, " % (qdx_input, qdy_input, qdz_input) +
-#                               "%f, %f, %f, " % (qdx_target, qdy_target, qdz_target) +
-#                               "%f, %f, %f, " % (qvx_input, qvy_input, qvz_input) +
-#                               "%f, %f, %f, " % (qvx_target, qvy_target, qvz_target) +
+                               "%f, %f, %f, " % (qdx_input, qdy_input, qdz_input) +
+                               "%f, %f, %f, " % (qdx_target, qdy_target, qdz_target) +
+                               "%f, %f, %f, " % (qvx_input, qvy_input, qvz_input) +
+                               "%f, %f, %f, " % (qvx_target, qvy_target, qvz_target) +
 #                               "%f, " % qvz_out +
-#                               "%f, %f, %f, " % (math.degrees(apa), math.degrees(ara), math.degrees(aya)) +
-#                               "%f, %f, %f, " % (math.degrees(pa_target), math.degrees(ra_target), math.degrees(ya_target) +
-#                               "%f, %f, %f, " % (math.degrees(qry), math.degrees(qrx), math.degrees(qrz)) +
-#                               "%f, %f, %f, " % (math.degrees(pr_target), math.degrees(rr_target), math.degrees(yr_target)) +
-#                               "%f, %f, %f, " % (math.degrees(pr_out), math.degrees(rr_out), math.degrees(yr_out)) +
+                               "YOLO," +
+                               "%f, %f, %f, " % (math.degrees(apa), math.degrees(ara), math.degrees(aya)) +
+                               "%f, %f, %f, " % (math.degrees(pa_target), math.degrees(ra_target), math.degrees(ya_target)) +
+                               "%f, %f, %f, " % (math.degrees(qry), math.degrees(qrx), math.degrees(qrz)) +
+                               "%f, %f, %f, " % (math.degrees(pr_target), math.degrees(rr_target), math.degrees(yr_target)) +
+                               "%f, %f, %f, " % (math.degrees(pr_out), math.degrees(rr_out), math.degrees(yr_out)) +
 
-#                               "%f, %f, %f, %f, %f, %f, %f, %f, %d, " % (qdx_input, qdx_target, qvx_input, qvx_target, math.degrees(apa), math.degrees(pa_target), math.degrees(qry), math.degrees(pr_target), pr_out) +
-#                               "%f, %f, %f, %f, %f, %f, %f, %f, %d, " % (qdy_input, qdy_target, qvy_input, qvy_target, math.degrees(ara), math.degrees(ra_target), math.degrees(qrx), math.degrees(rr_target), rr_out) +
-#                               "%f, %f, %f, %f, %d, " % (qdz_input, qdz_target, qvz_input, qvz_target, qaz_out) +
-#                               "%f, %f, %f, %f, %d, " % (math.degrees(aya), math.degrees(ya_target), math.degrees(qrz), math.degrees(yr_target), yr_out) +
+                               "%f, %f, %f, %f, %f, %f, %f, %f, %d, " % (qdx_input, qdx_target, qvx_input, qvx_target, math.degrees(apa), math.degrees(pa_target), math.degrees(qry), math.degrees(pr_target), pr_out) +
+                               "%f, %f, %f, %f, %f, %f, %f, %f, %d, " % (qdy_input, qdy_target, qvy_input, qvy_target, math.degrees(ara), math.degrees(ra_target), math.degrees(qrx), math.degrees(rr_target), rr_out) +
+                               "%f, %f, %f, %f, %d, " % (qdz_input, qdz_target, qvz_input, qvz_target, qaz_out) +
+                               "%f, %f, %f, %f, %d, " % (math.degrees(aya), math.degrees(ya_target), math.degrees(qrz), math.degrees(yr_target), yr_out) +
                                pwm_data)
+
+
+            #prev_time = now_time
+            #n_t = now_time = time.time()
+            #dtt = n_t - p_t
+            #dt = now_time - prev_time
+            #if(dt > max_time):
+            #    max_time = dt
+            #if(dt < min_time):
+            #    min_time = dt
+            #print "dt : " + str((dt) * 1000)
+            #print "                         dtt : " + str((dtt) * 1000)
+
+        #stop_time_yolo = time.time()
+        #print "min_time : " + str(min_time*1000)
+        #print "max_time : " + str(max_time*1000)
+        #print "FLIGHT TIME : " + str(stop_time_yolo - start_time_yolo)
+
+        #newcode
+        remote.stop()
 
 
         logger.critical("Flight time %f", time.time() - start_flight)

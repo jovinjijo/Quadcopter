@@ -1,0 +1,3 @@
+[WARNING] (MainThread) __init__ 3162, Zoe is flying.
+[WARNING] (MainThread) __init__ 345, SRD:, 1
+[CRITICAL] (MainThread) __init__ 438, IMU core temp (boot): ,15.797220
